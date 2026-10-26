@@ -9,7 +9,15 @@
 @media (prefers-color-scheme:dark){:root{--bg:#111a1e;--panel:#1a272d;--ink:#e6edf0;--sub:#9aabb3;--line:#2c3c44;--accent:#5fb3c7;--on:#0c1418;--gil:#e0a94a}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 "Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif}
-main{max-width:860px;margin:0 auto;padding:24px 16px 48px}
+main{max-width:1040px;margin:0 auto;padding:24px 16px 48px}
+.layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:760px){.layout{grid-template-columns:1fr}}
+.lvs{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:0 14px 6px}
+.lvs summary{cursor:pointer;font-weight:600;padding:12px 0}
+.lvs[open] summary{border-bottom:1px solid var(--line);margin-bottom:6px}
+.grp{font-size:12px;color:var(--sub);margin:10px 0 2px}
+.lvrow{flex-direction:row;justify-content:space-between;align-items:center;color:var(--ink);font-size:15px;padding:3px 0}
+.lvrow input{width:76px}
 h1{font-size:22px;margin:0 0 4px}
 .sub{color:var(--sub);margin:0 0 20px;font-size:13px}
 .bar{display:flex;flex-wrap:wrap;gap:12px;align-items:end;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
@@ -35,9 +43,14 @@ tr:last-child td{border-bottom:0}
 <h1>Hades 金策リスト</h1>
 <p class="sub">Mana / Hades のマーケット相場から、そのレベルで採集・製作できる売れ筋アイテムを20件表示します。</p>
 
+<div class="layout">
+<details class="lvs" open>
+  <summary>レベル設定</summary>
+  <div id="lvlist"></div>
+</details>
+<section>
 <div class="bar">
-  <label>クラス<select id="job"></select></label>
-  <label>レベル<input id="lv" type="number" min="1" max="100" value="1"></label>
+  <label>検索するクラス<select id="job"></select></label>
   <label>並び順<select id="sort">
     <option value="turn">1日の売上が大きい順</option>
     <option value="vel">販売数が多い順</option>
@@ -50,6 +63,8 @@ tr:last-child td{border-bottom:0}
     <thead><tr><th>#</th><th>アイテム</th><th>平均売価</th><th>最安値</th><th>1日販売数</th><th>1日売上</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
+</div>
+</section>
 </div>
 </main>
 
@@ -71,9 +86,15 @@ const levels = load("levels", {});
 // 画面の初期化
 for (const [k, n] of Object.entries(JOBS)) $("job").add(new Option(n, k));
 $("job").value = load("job", "CRP");
-$("lv").value = levels[$("job").value] ?? 1;
-$("job").onchange = () => { save("job", $("job").value); $("lv").value = levels[$("job").value] ?? 1; };
-$("lv").oninput = () => { levels[$("job").value] = +$("lv").value || 1; save("levels", levels); };
+$("job").onchange = () => save("job", $("job").value);
+
+const GROUPS = [["クラフター", ["CRP","BSM","ARM","GSM","LTW","WVR","ALC","CUL"]], ["ギャザラー", ["MIN","BTN","FSH"]]];
+$("lvlist").innerHTML = GROUPS.map(([t, js]) => `<div class="grp">${t}</div>` + js.map(k =>
+  `<label class="lvrow">${JOBS[k]}<input type="number" min="1" max="100" data-j="${k}" value="${levels[k] ?? 1}"></label>`).join("")).join("");
+$("lvlist").oninput = e => {
+  const k = e.target.dataset.j;
+  if (k) { levels[k] = Math.min(100, Math.max(1, +e.target.value || 1)); save("levels", levels); }
+};
 
 fetch("items.json").then(r => r.json()).then(d => {
   DB = d; $("go").disabled = false; $("st").textContent = "クラスとレベルを選んで、検索を押してください。";
@@ -102,7 +123,7 @@ async function market(ids) {
 
 // 検索
 $("go").onclick = async () => {
-  const job = $("job").value, lv = +$("lv").value || 1;
+  const job = $("job").value, lv = levels[job] ?? 1;
   const ids = [...new Set((DB.craft[job] ?? DB.gather[job] ?? []).filter(([l]) => l <= lv).map(([, i]) => i))];
   if (!ids.length) { $("st").textContent = "該当するアイテムがありません。"; return; }
   $("go").disabled = true; $("res").hidden = true;
