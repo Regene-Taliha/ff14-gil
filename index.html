@@ -29,11 +29,12 @@ button:disabled{opacity:.5;cursor:wait}
 :focus-visible{outline:2px solid var(--gil);outline-offset:2px}
 #st{margin:14px 2px;color:var(--sub);font-size:13px;min-height:20px}
 .wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px}
-table{border-collapse:collapse;width:100%;min-width:560px}
+table{border-collapse:collapse;width:100%;min-width:640px}
 th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
 th{font-size:12px;color:var(--sub);font-weight:600}
 td:nth-child(1),th:nth-child(1){text-align:center;width:44px;color:var(--sub)}
-td:nth-child(2),th:nth-child(2){text-align:left;white-space:normal}
+td:nth-child(2),th:nth-child(2),td:nth-child(3),th:nth-child(3){text-align:left}
+td:nth-child(2){white-space:normal}
 td.g{color:var(--gil);font-weight:600}
 tr:last-child td{border-bottom:0}
 </style>
@@ -50,7 +51,6 @@ tr:last-child td{border-bottom:0}
 </details>
 <section>
 <div class="bar">
-  <label>検索するクラス<select id="job"></select></label>
   <label>並び順<select id="sort">
     <option value="turn">1日の売上が大きい順</option>
     <option value="vel">販売数が多い順</option>
@@ -60,7 +60,7 @@ tr:last-child td{border-bottom:0}
 <div id="st">読み込み中…</div>
 <div class="wrap" id="res" hidden>
   <table>
-    <thead><tr><th>#</th><th>アイテム</th><th>平均売価</th><th>最安値</th><th>1日販売数</th><th>1日売上</th></tr></thead>
+    <thead><tr><th>#</th><th>アイテム</th><th>クラス</th><th>平均売価</th><th>最安値</th><th>1日販売数</th><th>1日売上</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
@@ -84,16 +84,16 @@ let DB;
 const levels = load("levels", {});
 
 // 画面の初期化
-for (const [k, n] of Object.entries(JOBS)) $("job").add(new Option(n, k));
-$("job").value = load("job", "CRP");
-$("job").onchange = () => save("job", $("job").value);
 
 const GROUPS = [["クラフター", ["CRP","BSM","ARM","GSM","LTW","WVR","ALC","CUL"]], ["ギャザラー", ["MIN","BTN","FSH"]]];
 $("lvlist").innerHTML = GROUPS.map(([t, js]) => `<div class="grp">${t}</div>` + js.map(k =>
-  `<label class="lvrow">${JOBS[k]}<input type="number" min="1" max="100" data-j="${k}" value="${levels[k] ?? 1}"></label>`).join("")).join("");
+  `<label class="lvrow">${JOBS[k]}<input type="number" min="1" max="100" data-j="${k}" value="${levels[k] ?? ""}" placeholder="-"></label>`).join("")).join("");
 $("lvlist").oninput = e => {
   const k = e.target.dataset.j;
-  if (k) { levels[k] = Math.min(100, Math.max(1, +e.target.value || 1)); save("levels", levels); }
+  if (!k) return;
+  const n = +e.target.value;
+  if (n >= 1) levels[k] = Math.min(100, n); else delete levels[k];
+  save("levels", levels);
 };
 
 fetch("items.json").then(r => r.json()).then(d => {
@@ -110,7 +110,7 @@ function reduce(r) {
   return [r.itemId, Math.round(avg), +v.toFixed(2), mins.length ? Math.min(...mins) : 0];
 }
 async function market(ids) {
-  const key = `mk:${ids[0]}-${ids.at(-1)}-${ids.length}`;
+  const key = `mk:${ids.length}-${ids.reduce((a, i) => (a * 31 + i) >>> 0, 7)}`;
   const c = load(key, null);
   if (c && Date.now() - c.t < TTL) return c.d;
   const res = await fetch(`https://universalis.app/api/v2/aggregated/${WORLD}/${ids.join(",")}`);
@@ -123,9 +123,11 @@ async function market(ids) {
 
 // 検索
 $("go").onclick = async () => {
-  const job = $("job").value, lv = levels[job] ?? 1;
-  const ids = [...new Set((DB.craft[job] ?? DB.gather[job] ?? []).filter(([l]) => l <= lv).map(([, i]) => i))];
-  if (!ids.length) { $("st").textContent = "該当するアイテムがありません。"; return; }
+  const by = {};  // アイテムID → 作れる/採れるクラス
+  for (const [j, lv] of Object.entries(levels))
+    for (const [l, i] of (DB.craft[j] ?? DB.gather[j] ?? [])) if (l <= lv) (by[i] ??= new Set()).add(JOBS[j]);
+  const ids = Object.keys(by).map(Number).sort((a, b) => a - b);
+  if (!ids.length) { $("st").textContent = "左のレベル設定で、クラスのレベルを入力してください。"; return; }
   $("go").disabled = true; $("res").hidden = true;
   const all = [];
   try {
@@ -139,15 +141,15 @@ $("go").onclick = async () => {
   }
   const list = all
     .filter(([, avg, v, min]) => v >= 1 && avg > 0 && !(min && avg / min >= 50))
-    .map(([id, avg, v, min]) => ({ id, avg, v, min, turn: avg * v }))
+    .map(([id, avg, v, min]) => ({ id, avg, v, min, turn: avg * v, jobs: [...by[id]].join("・") }))
     .sort((a, b) => $("sort").value === "vel" ? b.v - a.v : b.turn - a.turn)
     .slice(0, 20);
   $("rows").innerHTML = list.map((x, i) =>
-    `<tr><td>${i + 1}</td><td>${DB.names[x.id] ?? x.id}</td><td>${yen(x.avg)}</td><td>${x.min ? yen(x.min) : "-"}</td><td>${x.v.toFixed(1)}</td><td class="g">${yen(x.turn)}</td></tr>`
+    `<tr><td>${i + 1}</td><td>${DB.names[x.id] ?? x.id}</td><td>${x.jobs}</td><td>${yen(x.avg)}</td><td>${x.min ? yen(x.min) : "-"}</td><td>${x.v.toFixed(1)}</td><td class="g">${yen(x.turn)}</td></tr>`
   ).join("");
   $("res").hidden = !list.length;
   $("st").textContent = list.length
-    ? `${JOBS[job]} Lv${lv} 以下の対象 ${ids.length} 件から、売れ筋 ${list.length} 件を表示しています。`
+    ? `設定済みクラスの対象 ${ids.length} 件から、売れ筋 ${list.length} 件を表示しています。`
     : "1日1個以上売れているアイテムが見つかりませんでした。";
   $("go").disabled = false;
 };
